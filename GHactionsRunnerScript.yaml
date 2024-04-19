@@ -10,7 +10,7 @@ Parameters:
   GithubOrganization:
     Type: String
     Description: Github Organization where runner will set up
-    Default: ORGANIZATION
+    Default: COMPANY
   RunnersVersion:
     Type: String
     Description: Runner version.
@@ -19,6 +19,19 @@ Parameters:
     Type: String
     Description: Tokens to use in each repo to set up new runner in Github repository.
     Default: "'[{\"DevOps-Infrastructure-Apps\":\"token\"},{\"DevOps-Shared-Resources\":\"token\"},{\"DevOps-Base-Infrastructure\":\"token\"},{\"DevOps-Tools\":\"token\"},{\"DevOps-Secrets-Management\":\"token\"},{\"DevOps-Infrastructure-DataBases\":\"token\"}]'"
+  AMIId:
+    Type: String
+    Default: "ami-0230bd60aa48260c6"
+    Description: The Amazon Machine Image (AMI) ID for the EC2 instance - Should be amazon Linux.
+    AllowedPattern: "ami-[0-9a-f]{8,17}"
+    ConstraintDescription: Must be a valid AMI ID starting with "ami-".
+  EBSVolumeSize:
+    Type: Number
+    Description: The size of the EBS volume in GiB.
+    Default: 15
+    MinValue: 1
+    MaxValue: 16384
+    ConstraintDescription: Must be between 1 and 16,384 GiB.
 
 Resources:
   VPC:
@@ -149,18 +162,6 @@ Resources:
         Statement:
           - Effect: Allow
             Action:
-              - s3:GetBucketWebsite
-              - s3:GetReplicationConfiguration
-              - s3:GetLifecycleConfiguration
-              - s3:GetEncryptionConfiguration
-              - s3:GetBucketVersioning
-              - s3:GetBucketPolicy
-              - s3:GetBucketObjectLockConfiguration
-              - s3:GetBucketLogging
-              - s3:GetBucketCORS
-              - s3:GetBucketAcl
-              - s3:GetAccelerateConfiguration
-              - s3:CreateBucket
               - ec2:DescribeIamInstanceProfileAssociations
               - ec2:DescribeSecurityGroups
               - ec2:DescribeSubnets
@@ -203,11 +204,17 @@ Resources:
               - ec2:CreateInternetGateway
               - ec2:ModifyVpcAttribute
               - ec2:CreateVpc
+            Resource: "*"
+          - Effect: Allow
+            Action:
               - route53:ListResourceRecordSets
               - route53:GetHostedZone
               - route53:GetChange
               - route53:ChangeResourceRecordSets
               - route53:CreateHostedZone
+            Resource: "*"
+          - Effect: Allow
+            Action:
               - lambda:ListVersionsByFunction
               - lambda:GetFunctionCodeSigningConfig
               - lambda:GetFunction
@@ -215,6 +222,9 @@ Resources:
               - lambda:UpdateFunctionConfiguration
               - lambda:DeleteFunction
               - lambda:CreateFunction
+            Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:*-${Environment}*"
+          - Effect: Allow
+            Action:
               - iam:GetRole
               - iam:GetInstanceProfile
               - iam:AddRoleToInstanceProfile
@@ -233,8 +243,9 @@ Resources:
               - iam:DeletePolicyVersion
               - iam:CreatePolicyVersion
               - iam:CreateRole
-              - dynamodb:PutItem
-              - dynamodb:UpdateItem
+            Resource: "*"
+          - Effect: Allow
+            Action:
               - elasticloadbalancing:DescribeTargetHealth
               - elasticloadbalancing:DescribeRules
               - elasticloadbalancing:DescribeTargetGroupAttributes
@@ -254,32 +265,64 @@ Resources:
               - elasticloadbalancing:CreateLoadBalancer
               - elasticloadbalancing:ModifyTargetGroupAttributes
               - elasticloadbalancing:CreateTargetGroup
-              - codeartifact:DescribeRepository
-              - codeartifact:DescribeDomain
-              - codeartifact:CreateRepository
-              - codeartifact:DeleteRepository
-              - codeartifact:AssociateExternalConnection
-              - codeartifact:CreateDomain
-              - cloudformation:GetTemplate
-              - cloudformation:DescribeStacks
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - ssm:DescribeAssociation
+              - ssm:GetDeployablePatchSnapshotForInstance
+              - ssm:GetDocument
+              - ssm:DescribeDocument
+              - ssm:GetManifest
+              - ssm:GetParameter
+              - ssm:GetParameters
+              - ssm:ListAssociations
+              - ssm:ListInstanceAssociations
+              - ssm:PutInventory
+              - ssm:PutComplianceItems
+              - ssm:PutConfigurePackageResult
+              - ssm:UpdateAssociationStatus
+              - ssm:UpdateInstanceAssociationStatus
+              - ssm:UpdateInstanceInformation
+              - ssm:ListInstanceInventory
+              - ssm:ListResourceComplianceSummaries
+              - ssm:ListResourceDataSync
+              - ssm:SyncInventory
+              - ssm:SendCommand
+              - ssm:ReceiveCommand
+              - ssm:SendAutomationSignal
+              - ssm:StartAutomationExecution
+              - ssm:StartSession
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - ds:DescribeDirectories
+              - ds:CreateMicrosoftAD
+            Resource: "*"
+          - Effect: Allow
+            Action:
               - secretsmanager:PutSecretValue
               - secretsmanager:GetSecretValue
               - secretsmanager:GetResourcePolicy
               - secretsmanager:DescribeSecret
               - secretsmanager:CreateSecret
               - secretsmanager:DeleteSecret
-              - ds:DescribeDirectories
-              - ds:CreateMicrosoftAD
-              - acm:DescribeCertificate
-              - acm:RequestCertificate
-            Resource: !Sub "arn:aws:*:${AWS::Region}:${AWS::AccountId}:*-${Environment}"
+            Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:*-${Environment}*"
+          - Effect: Allow
+            Action:
+              - codeartifact:DescribeRepository
+              - codeartifact:DescribeDomain
+              - codeartifact:CreateRepository
+              - codeartifact:DeleteRepository
+              - codeartifact:AssociateExternalConnection
+              - codeartifact:CreateDomain
+            Resource: "*"
       Roles:
         - !Ref MainRunnersRole
 
   TerraformS3Bucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub "devops-ORGANIZATION-terraform-${Environment}"
+      BucketName: !Sub "devops-COMPANY-terraform-${Environment}"
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
@@ -344,11 +387,18 @@ Resources:
   EC2Instance:
     Type: AWS::EC2::Instance
     Properties:
-      ImageId: ami-0230bd60aa48260c6
-      InstanceType: t2.large
+      # Image should be amazon linux latest.
+      ImageId: !Ref AMIId
+      InstanceType: t3.large
       SubnetId: !Ref PublicSubnet1
       KeyName: !Ref DevopsKeyPair
       IamInstanceProfile: !Ref MainRunnersInstanceProfile
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: !Ref EBSVolumeSize
+            VolumeType: gp2
+            DeleteOnTermination: true
       SecurityGroupIds: 
         - !Ref WebServerSecurityGroup
       Tags:
@@ -357,74 +407,124 @@ Resources:
         - Key: map-migrated
           Value: mig47QIGQKVNN 
       UserData:
-        Fn::Base64: !Sub |
+        Fn::Base64: 
+          !Sub |
             #!/bin/bash -xe
-            exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+            LOG_FILE="/var/log/user-data.log"
+            exec > >(tee $LOG_FILE | logger -t user-data -s 2>/dev/console) 2>&1
 
-            yum update -y
-            yum install -y openssl
+            # Function to log an error message and exit
+            error_exit() {
+              echo "$1" 1>&2
+              echo "$1" >> $LOG_FILE
+              exit 1
+            }
 
-            # Installing Terraform
-            yum install -y yum-utils
-            yum-config-manager --add-repo https://rpm.releases.hashicorp.com/AmazonLinux/hashicorp.repo
-            yum -y install terraform
-            yum install jq -y
+            # Ensure /home/runner exists and has the correct permissions
+            if ! id "runner" &>/dev/null; then
+              if ! useradd -m -d /home/runner runner; then
+                error_exit "Failed to create user 'runner'."
+              fi
+            fi
+            if ! mkdir -p /home/runner || ! chown runner:runner /home/runner; then
+              error_exit "Failed to ensure /home/runner exists and has correct permissions."
+            fi
 
-            # Installing Git
-            dnf install git-all -y
+            # Update the system
+            if ! yum update -y; then
+              error_exit "Failed to update system."
+            fi
 
-            # .Net core dependecies
-            rpm -Uvh https://packages.microsoft.com/config/centos/7/packages-microsoft-prod.rpm
-            yum install dotnet-sdk-7.0 -y
+            # Install required packages
+            if ! yum install -y openssl yum-utils jq; then
+              error_exit "Failed to install required packages."
+            fi
 
-            # New runner user
-            useradd runner
-            usermod -aG wheel runner
-            su - runner
-            chown runner:runner /home/runner
+            # Install Terraform
+            if ! yum-config-manager --add-repo https://rpm.releases.hashicorp.com/AmazonLinux/hashicorp.repo || ! yum -y install terraform; then
+              error_exit "Failed to install Terraform."
+            fi
+
+            # Install Git
+            if ! yum install -y git; then
+              error_exit "Failed to install Git."
+            fi
+
+            # Install .NET Core dependencies
+            if ! rpm -Uvh https://packages.microsoft.com/config/centos/7/packages-microsoft-prod.rpm || ! yum install -y dotnet-sdk-3.1; then
+              error_exit "Failed to install .NET SDK."
+            fi
+
+            # Add the runner user to the wheel group if not already a member
+            if ! groups runner | grep -qw "wheel"; then
+              if ! usermod -aG wheel runner; then
+                error_exit "Failed to add 'runner' user to wheel group."
+              fi
+            fi
+
+            # Install the SSM agent
+            if ! yum install -y amazon-ssm-agent; then
+              error_exit "Failed to install the SSM agent."
+            fi
+
+            # Enable and start the SSM agent service
+            if ! systemctl enable amazon-ssm-agent; then
+              error_exit "Failed to enable the SSM agent service."
+            fi
+            if ! systemctl start amazon-ssm-agent; then
+              error_exit "Failed to start the SSM agent service."
+            fi
 
             # Create a main runners folder
-            usrDirectory="/home/runner/"
-            cd $usrDirectory
-            mkdir actions-runner
-            cd actions-runner
+            usrDirectory="/home/runner"
+            if ! mkdir -p "$usrDirectory/actions-runner"; then
+              error_exit "Failed to create actions-runner directory."
+            fi
+            if ! cd "$usrDirectory/actions-runner"; then
+              error_exit "Failed to change directory to actions-runner."
+            fi
+
             # Download the latest runner package
-            curl -o actions-runner-linux-x64-${RunnersVersion}.tar.gz -L https://github.com/actions/runner/releases/download/v${RunnersVersion}/actions-runner-linux-x64-${RunnersVersion}.tar.gz
+            if ! curl -o actions-runner-linux-x64-${RunnersVersion}.tar.gz -L "https://github.com/actions/runner/releases/download/v${RunnersVersion}/actions-runner-linux-x64-${RunnersVersion}.tar.gz"; then
+              error_exit "Failed to download actions runner package."
+            fi
+
             RunnerLabel="lnx-tf-${Environment}"
 
-            echo ${RunnersTokens}
+            echo "${RunnersTokens}"
             ########### Loop over runnerTokens Json ###########
             ###################################################
-            jq -c '.[]' <<< ${RunnersTokens} | while read -r element; do
-                
-                # Extract key and value using jq
-                RepoName=$(echo "$element" | jq -r 'keys_unsorted[0]')
-                tempToken=$(echo "$element" | jq -r '.[keys_unsorted[0]]')
-                
-                # Print key and value
-                echo "Key: $RepoName, Value: $tempToken"
+            echo ${RunnersTokens} | jq -c '.[]' | while IFS= read -r element; do
+              # Extract key and value using jq
+              RepoName=$(echo "$element" | jq -r 'keys_unsorted[0]')
+              tempToken=$(echo "$element" | jq -r '.[keys_unsorted[0]]')
 
-                RunnerName="tf-$RepoName-${Environment}"
-                mkdir $RepoName
-                # Extract the installer to folder
-                tar xzf ./actions-runner-linux-x64-${RunnersVersion}.tar.gz -C ./$RepoName
-                # Configure and isntall as a service
-                chmod -R 777 .
-                RUNNER_ALLOW_RUNASROOT=true ./$RepoName/config.sh --unattended --url https://github.com/${GithubOrganization}/$RepoName --token --token $tempToken --name $RunnerName --work _work --runnergroup Default --labels $RunnerLabel
-                pushd $RepoName
-                ./svc.sh install
-                ./svc.sh start
-                chmod -R 777 _diag
-                ./svc.sh status
-                cd ..
+              # Print key and value
+              echo "Key: $RepoName, Value: $tempToken"
 
-            done
+              RunnerName="tf-$RepoName-${Environment}"
+              if ! mkdir -p $RepoName; then
+                error_exit "Failed to create directory for $RepoName."
+              fi
+              # Extract the installer to folder
+              if ! tar xzf ./actions-runner-linux-x64-${RunnersVersion}.tar.gz -C ./$RepoName; then
+                error_exit "Failed to extract runner package for $RepoName."
+              fi
+              # Configure and install as a service
+              chmod -R 755 .
+              (RUNNER_ALLOW_RUNASROOT=true ./$RepoName/config.sh --unattended --url "https://github.com/${GithubOrganization}/$RepoName" --token $tempToken --name $RunnerName --work _work --runnergroup Default --labels $RunnerLabel >> $LOG_FILE 2>&1) || echo "Failed to configure runner for $RepoName, continuing..."
+              pushd $RepoName
+              (./svc.sh install >> $LOG_FILE 2>&1) || echo "Failed to install runner service for $RepoName, continuing..."
+              (./svc.sh start >> $LOG_FILE 2>&1) || echo "Failed to start runner service for $RepoName, continuing..."
+              chmod -R 755 _diag
+              (./svc.sh status >> $LOG_FILE 2>&1) || echo "Failed to get status for runner service for $RepoName, continuing..."
+              popd || echo "Failed to return to previous directory, continuing..."
+
+            done || echo "Failed to configure runners, continuing..."
 
             echo "FINISHED"
-
+            ####################################################
             ###################################################
-            ###################################################
-
 Outputs:
   PublicIp:
     Description: EC2 Instance Public Ip
