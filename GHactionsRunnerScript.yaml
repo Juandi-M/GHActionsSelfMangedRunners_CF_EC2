@@ -10,7 +10,7 @@ Parameters:
   GithubOrganization:
     Type: String
     Description: Github Organization where runner will set up
-    Default: AcuityOHS
+    Default: ORGANIZATION
   RunnersVersion:
     Type: String
     Description: Runner version.
@@ -279,7 +279,7 @@ Resources:
   TerraformS3Bucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub "devops-acuity-terraform-${Environment}"
+      BucketName: !Sub "devops-ORGANIZATION-terraform-${Environment}"
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
